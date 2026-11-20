@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Mismos valores que el sketch
 UMBRAL_ENCENDER, UMBRAL_APAGAR = 35, 55
+RIE = re.compile(r"riego=(\d)")
 SIL = re.compile(r"silencio=(\d)")
 LINE = re.compile(r"raw=(\d+)\s+humedad=(\d+)%\s+estado=(\w+)")
 
@@ -66,10 +67,10 @@ def lector_serie(puerto_fijo):
                     txt = linea.decode(errors="ignore")
                     m = LINE.search(txt)
                     if m:
-                        sil = SIL.search(txt)
+                        sil, rie = SIL.search(txt), RIE.search(txt)
                         with lock:
                             state["real"] = {"raw": int(m[1]), "humedad": int(m[2]),
-                                             "bomba": m[3] == "REGANDO", "silencio": bool(sil and sil[1] == "1"), "ts": time.time(), "puerto": puerto}
+                                             "bomba": m[3] == "REGANDO", "silencio": bool(sil and sil[1] == "1"), "habilitado": bool(rie and rie[1] == "1"), "ts": time.time(), "puerto": puerto}
         except Exception:
             pass
         finally:
@@ -113,19 +114,20 @@ small{color:#94a3b8;display:block;margin-top:.4rem}
 <div class=card>
  <div class=big><span id=pct>0</span>%</div>
  <div class=bar><div class=fill id=fill></div><div class=mark style="left:35%"></div><div class=mark style="left:55%"></div></div>
- <small>Marcas: enciende &lt;35%, apaga ≥55% · riega en pulsos de 5 s (pausa de 5 s)</small>
+ <small>Marcas: enciende &lt;35%, apaga ≥55% · pulsos de 5 s con pausa de 5 s</small>
+ <small>El riego automático espera a que pulses «Iniciar» tras conectar el Arduino.</small>
  <div id=sim style="margin-top:1.2rem"><input type=range id=slider min=0 max=100>
   <small>Humedad simulada (la histéresis decide la bomba)</small></div>
 </div>
 <div class=card>Bomba: <span class="pump off" id=pump>APAGADA</span>
- <div id=man class=btns><button id=bon>Encender</button><button id=boff>Apagar</button><button id=bbuz></button>
+ <div id=man class=btns><button id=bon>Encender</button><button id=boff>Apagar</button><button id=bbuz></button><button id=bini></button>
  </div><small id=mn></small></div>
 <script>
-const $=id=>document.getElementById(id);let silencio=false,s0={lectura:true};
+const $=id=>document.getElementById(id);let silencio=false,habilitado=false,s0={lectura:true};
 const post=b=>fetch('/api',{method:'POST',body:JSON.stringify(b)}).then(refresh);
 $('real').onchange=e=>post({modo:e.target.checked?'real':'simulado'});
 $('slider').oninput=e=>post({humedad:+e.target.value});
-$('bon').onclick=()=>post({bomba:true});$('boff').onclick=()=>post({bomba:false});$('blec').onclick=()=>post({lectura:!s0.lectura});$('bbuz').onclick=()=>post({silencio:!silencio});
+$('bon').onclick=()=>post({bomba:true});$('boff').onclick=()=>post({bomba:false});$('blec').onclick=()=>post({lectura:!s0.lectura});$('bini').onclick=()=>post({habilitado:!habilitado});$('bbuz').onclick=()=>post({silencio:!silencio});
 async function refresh(){
  const s=s0=await (await fetch('/api')).json(), r=s.real, real=s.modo=='real';
  const fresh=r.humedad!=null&&Date.now()/1000-r.ts<5, ok=real&&fresh;
@@ -133,6 +135,7 @@ async function refresh(){
  $('real').checked=real;$('mlabel').textContent=real?'REAL (sensor)':'SIMULADO';
  $('pct').textContent=real&&!ok?'--':pct;$('fill').style.width=pct+'%';
  $('pump').textContent=on?'ENCENDIDA':'APAGADA';$('pump').className='pump '+(on?'on':'off');
+ habilitado=fresh&&!!r.habilitado;$('bini').textContent=habilitado?'⏹ Detener riego automático':'▶ Iniciar riego automático';$('bini').style.background=habilitado?'#b45309':'#0369a1';
  silencio=!!r.silencio;$('bbuz').textContent=silencio?'🔇 Buzzer silenciado':'🔔 Buzzer activo';
  $('sim').style.display=real?'none':'';
  if(document.activeElement!==$('slider'))$('slider').value=s.humedad;
@@ -180,6 +183,8 @@ class H(BaseHTTPRequestHandler):
                 enviar("1\n" if body["bomba"] else "0\n")
             if isinstance(body.get("silencio"), bool):
                 enviar("S\n" if body["silencio"] else "V\n")
+            if isinstance(body.get("habilitado"), bool):
+                enviar("E\n" if body["habilitado"] else "D\n")
             if isinstance(body.get("lectura"), bool):
                 state["lectura"] = body["lectura"]
         self._send("{}")

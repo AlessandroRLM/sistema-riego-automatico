@@ -23,6 +23,11 @@ enum Fase { LIBRE, PULSO, ESPERA };
 Fase fase = LIBRE;
 unsigned long tFase = 0;
 
+// true: el riego automatico empieza al encender el Arduino.
+// false: espera a que lo inicies desde el panel (comando E).
+const bool INICIAR_AL_ENCENDER = false;
+bool habilitado = INICIAR_AL_ENCENDER;
+
 bool regando = false;
 
 // Control desde el panel web (por serie)
@@ -30,7 +35,7 @@ int simPct = -1;  // >=0: humedad simulada en vez del sensor
 bool silencio = false;  // buzzer silenciado
 int manual = -1;  // -1 auto, 0 forzada apagada, 1 forzada encendida
 
-// Comandos (una linea cada uno): H<n> humedad simulada, R sensor real, A auto, 1 bomba on, 0 bomba off, S silenciar buzzer, V buzzer activo
+// Comandos (una linea cada uno): H<n> humedad simulada, R sensor real, A auto, 1 bomba on, 0 bomba off, S silenciar buzzer, V buzzer activo, E iniciar riego automatico, D detenerlo
 bool leerComandos() {
   static char buf[8];
   static byte n = 0;
@@ -51,6 +56,8 @@ bool leerComandos() {
     else if (buf[0] == '0') manual = 0;
     else if (buf[0] == 'S') silencio = true;
     else if (buf[0] == 'V') silencio = false;
+    else if (buf[0] == 'E') habilitado = true;
+    else if (buf[0] == 'D') habilitado = false;
     else continue;
     hubo = true;
   }
@@ -80,9 +87,11 @@ void loop() {
     100
   );
 
-  // Control por pulsos con histeresis
+  // Control por pulsos con histeresis (solo si el riego automatico esta iniciado)
   unsigned long ahora = millis();
-  if (fase == LIBRE && pct < UMBRAL_ENCENDER) {
+  if (!habilitado) {
+    fase = LIBRE;
+  } else if (fase == LIBRE && pct < UMBRAL_ENCENDER) {
     fase = PULSO; tFase = ahora;
   } else if (fase == PULSO && pct >= UMBRAL_APAGAR) {
     fase = LIBRE;
@@ -117,7 +126,10 @@ void loop() {
   Serial.print(manual >= 0 ? "MANUAL" : simPct >= 0 ? "SIM" : "REAL");
 
   Serial.print("  silencio=");
-  Serial.println(silencio ? 1 : 0);
+  Serial.print(silencio ? 1 : 0);
+
+  Serial.print("  riego=");
+  Serial.println(habilitado ? 1 : 0);
 
   // Espera 100 ms, pero sale antes si llega un comando
   unsigned long t = millis();
